@@ -8,13 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -153,25 +151,6 @@ func (c *Client) GetCtx(ctx context.Context, urlStr string) (*http.Response, err
 	return c.Do(req)
 }
 
-// Post is a convenience wrapper around Do.
-func (c *Client) Post(urlStr, contentType string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodPost, urlStr, body)
-	if err != nil {
-		return nil, err
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	return c.Do(req)
-}
-
-// PostRaw is like Post but returns the client's raw *http.Client.Do so
-// callers that need exact single-attempt semantics can use it. Currently
-// unused externally; kept for symmetry.
-func (c *Client) PostRaw(req *http.Request) (*http.Response, error) {
-	return c.httpClient().Do(req)
-}
-
 // isTransient classifies an error as retriable.
 func isTransient(err error) bool {
 	if err == nil {
@@ -226,46 +205,24 @@ func dohDialContext(ctx context.Context, network, addr string) (net.Conn, error)
 		}
 	}
 
-	// Try system DNS once in parallel with DoH (whichever returns first,
-	// we still prefer DoH because system resolver may return poisoned IPs).
-	sysCh := make(chan net.Conn, 1)
-	sysErrCh := make(chan error, 1)
-	var sysStarted atomic.Bool
-	sysCtx, sysCancel := context.WithCancel(ctx)
-	defer sysCancel()
-
-	sysStarted.Store(true)
-	go func() {
-		c, e := baseDialer.DialContext(sysCtx, network, addr)
-		if e != nil {
-			sysErrCh <- e
-			return
-		}
-		sysCh <- c
-	}()
-
-	// DoH race
+	// DoH is authoritative for this host: wait briefly for a clean answer and
+	// prefer it over the (often poisoned) system resolver. Only if DoH yields
+	// nothing dialable do we fall back to the system DNS result.
 	ips, dohErr := resolveDoH(ctx, host)
 	if dohErr == nil && len(ips) > 0 {
-		conn, err := dialIPs(ctx, network, ips, port)
-		if err == nil {
-			sysCancel()
+		if conn, err := dialIPs(ctx, network, ips, port); err == nil {
 			return conn, nil
 		}
 	}
 
-	// Fall back to whatever the system dial returned
-	select {
-	case c := <-sysCh:
-		return c, nil
-	case e := <-sysErrCh:
-		if dohErr != nil {
-			return nil, fmt.Errorf("dial %s: doh=%v sys=%v", host, dohErr, e)
-		}
-		return nil, e
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if dohErr == nil {
+		dohErr = fmt.Errorf("doh: none of %d ips dialable", len(ips))
 	}
+	conn, err := baseDialer.DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: doh=%v sys=%v", host, dohErr, err)
+	}
+	return conn, nil
 }
 
 func dialIPs(ctx context.Context, network string, ips []string, port string) (net.Conn, error) {

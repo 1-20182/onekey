@@ -22,8 +22,12 @@ Thumbs.db
 
 # Project specific
 config.json
+rev_config.json
 logs/
 *.log
+
+# Old Python build artifacts (decompiled for reference only)
+Onekey.exe_extracted/
 
 # Temporary files
 *.tmp

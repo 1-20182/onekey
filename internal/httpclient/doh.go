@@ -21,6 +21,7 @@ var dohProviders = []string{
 // pollution in mainland China. For other hosts we defer to the system resolver
 // to avoid interfering with VPN/proxy setups.
 var dohHostSuffixes = []string{
+	// Steam 全系（常见被污染域名）
 	".steampowered.com",
 	".steamcontent.com",
 	".steamcommunity.com",
@@ -29,6 +30,19 @@ var dohHostSuffixes = []string{
 	"steamcontent.com",
 	"steamcommunity.com",
 	"steamstatic.com",
+	// GitHub 系列：国内直连被 DNS 污染时，走 DoH 拿纯净 IP，等价于 Steam++
+	// 的 hosts 加速但无需改系统 hosts、无需管理员权限、零冲突。
+	".github.com",
+	".githubusercontent.com",
+	"github.com",
+	"githubusercontent.com",
+	// GitHub CDN 镜像域名也纳入，避免镜像域名被污染导致下载慢/失败
+	".jsdelivr.net",
+	".gitmirror.com",
+	".ghproxy.net",
+	".ghproxy.com",
+	".ghproxy.cc",
+	".ghfast.top",
 }
 
 func shouldUseDoH(host string) bool {

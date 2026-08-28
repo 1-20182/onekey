@@ -6,14 +6,6 @@ export function AddToLibrary(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddToLibrary'](arg1, arg2, arg3, arg4);
 }
 
-export function CheckUpdate() {
-  return window['go']['main']['App']['CheckUpdate']();
-}
-
-export function GetAnnouncements() {
-  return window['go']['main']['App']['GetAnnouncements']();
-}
-
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -36,6 +28,10 @@ export function GetLibrary() {
 
 export function GetTaskStatus() {
   return window['go']['main']['App']['GetTaskStatus']();
+}
+
+export function KernelStatus() {
+  return window['go']['main']['App']['KernelStatus']();
 }
 
 export function LoadKernel() {
@@ -76,8 +72,4 @@ export function TestProxy(arg1) {
 
 export function UpdateConfig(arg1) {
   return window['go']['main']['App']['UpdateConfig'](arg1);
-}
-
-export function VerifyKey(arg1) {
-  return window['go']['main']['App']['VerifyKey'](arg1);
 }

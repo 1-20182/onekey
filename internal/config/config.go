@@ -18,7 +18,6 @@ import (
 )
 
 var DefaultConfig = models.AppConfig{
-	Key:             "",
 	DebugMode:       false,
 	LoggingFiles:    true,
 	ShowConsole:     false,
@@ -124,9 +123,6 @@ func (m *Manager) load() {
 	}
 
 	// Apply found values to config (auto-complete: missing keys keep defaults)
-	if v, ok := found["KEY"]; ok {
-		m.AppConfig.Key = v
-	}
 	if v, ok := found["Debug_Mode"]; ok {
 		m.AppConfig.DebugMode = v == "true"
 	}
@@ -220,7 +216,6 @@ func (m *Manager) setKey(key, value string) error {
 
 func (m *Manager) configMap(cfg models.AppConfig) map[string]string {
 	return map[string]string{
-		"KEY":               cfg.Key,
 		"Debug_Mode":        boolStr(cfg.DebugMode),
 		"Logging_Files":     boolStr(cfg.LoggingFiles),
 		"Show_Console":      boolStr(cfg.ShowConsole),
@@ -238,7 +233,6 @@ func boolStr(b bool) string {
 }
 
 func (m *Manager) Update(req models.UpdateConfigRequest) error {
-	m.AppConfig.Key = req.Key
 	m.AppConfig.CustomSteamPath = req.SteamPath
 	m.AppConfig.DebugMode = req.DebugMode
 	m.AppConfig.LoggingFiles = req.LoggingFiles

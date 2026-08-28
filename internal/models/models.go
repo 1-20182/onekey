@@ -2,7 +2,6 @@ package models
 
 // AppConfig represents the application configuration.
 type AppConfig struct {
-	Key             string `json:"KEY"`
 	DebugMode       bool   `json:"Debug_Mode"`
 	LoggingFiles    bool   `json:"Logging_Files"`
 	ShowConsole     bool   `json:"Show_Console"`
@@ -38,18 +37,6 @@ type SteamAppManifestInfo struct {
 	DLCs    []ManifestInfo `json:"dlcs"`
 }
 
-// KeyInfo holds API key details.
-type KeyInfo struct {
-	Key         string  `json:"key"`
-	Type        string  `json:"type"`
-	CreatedAt   string  `json:"createdAt"`
-	FirstUsedAt *string `json:"firstUsedAt"`
-	ExpiresAt   *string `json:"expiresAt"`
-	IsActive    bool    `json:"isActive"`
-	UsageCount  int     `json:"usageCount"`
-	TotalUsage  int     `json:"totalUsage"`
-}
-
 // TaskResult holds the result of an unlock task.
 type TaskResult struct {
 	Success bool   `json:"success"`
@@ -79,7 +66,6 @@ type DetailedConfig struct {
 	LoggingFiles    bool   `json:"logging_files"`
 	ShowConsole     bool   `json:"show_console"`
 	SteamPathExists bool   `json:"steam_path_exists"`
-	Key             string `json:"key"`
 	Language        string `json:"language"`
 	ProxyURL        string `json:"proxy_url"`
 }
@@ -90,7 +76,6 @@ type DetailedConfigResponse struct {
 }
 
 type UpdateConfigRequest struct {
-	Key          string `json:"key"`
 	SteamPath    string `json:"steam_path"`
 	DebugMode    bool   `json:"debug_mode"`
 	LoggingFiles bool   `json:"logging_files"`
@@ -99,40 +84,9 @@ type UpdateConfigRequest struct {
 	ProxyURL     string `json:"proxy_url"`
 }
 
-type KeyInfoAPIResponse struct {
-	Code int      `json:"code"`
-	Key  string   `json:"key"`
-	Info *KeyInfo `json:"info"`
-}
-
 type TaskStatusResponse struct {
 	Status string      `json:"status"`
 	Result *TaskResult `json:"result"`
-}
-
-// Announcement holds a single announcement from the server.
-type Announcement struct {
-	ID        int    `json:"id"`
-	Author    string `json:"author"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
-}
-
-// AnnouncementResponse holds the server announcements list.
-type AnnouncementResponse struct {
-	Success       bool           `json:"success"`
-	Announcements []Announcement `json:"announcements"`
-}
-
-// UpdateInfo holds version update information.
-type UpdateInfo struct {
-	HasUpdate      bool   `json:"has_update"`
-	LatestVersion  string `json:"latest_version"`
-	CurrentVersion string `json:"current_version"`
-	DownloadURL    string `json:"download_url"`
-	Changelog      string `json:"changelog"`
 }
 
 // KernelSettings holds SteamTools registry settings.

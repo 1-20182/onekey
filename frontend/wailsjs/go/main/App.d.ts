@@ -4,10 +4,6 @@ import {models} from '../models';
 
 export function AddToLibrary(arg1:number,arg2:string,arg3:string,arg4:string):Promise<models.SimpleResponse>;
 
-export function CheckUpdate():Promise<models.UpdateInfo>;
-
-export function GetAnnouncements():Promise<models.AnnouncementResponse>;
-
 export function GetConfig():Promise<models.ConfigResponse>;
 
 export function GetDetailedConfig():Promise<models.DetailedConfigResponse>;
@@ -19,6 +15,8 @@ export function GetKernelSettings():Promise<models.KernelSettingsResponse>;
 export function GetLibrary():Promise<Array<models.LibraryGame>>;
 
 export function GetTaskStatus():Promise<models.TaskStatusResponse>;
+
+export function KernelStatus():Promise<models.SimpleResponse>;
 
 export function LoadKernel():Promise<models.SimpleResponse>;
 
@@ -39,5 +37,3 @@ export function StartUnlock(arg1:string):Promise<models.SimpleResponse>;
 export function TestProxy(arg1:string):Promise<models.SimpleResponse>;
 
 export function UpdateConfig(arg1:models.UpdateConfigRequest):Promise<models.SimpleResponse>;
-
-export function VerifyKey(arg1:string):Promise<models.KeyInfoAPIResponse>;

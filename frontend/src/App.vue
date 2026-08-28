@@ -1,575 +1,926 @@
 <template>
-  <n-config-provider :theme="theme" :theme-overrides="themeOverrides">
-    <n-message-provider>
-      <n-dialog-provider>
-        <!-- OOBE: full-screen, no sidebar -->
-        <template v-if="route.name === 'oobe'">
-          <div class="titlebar" style="--wails-draggable: drag;">
-            <div class="titlebar-drag"></div>
-            <div class="titlebar-controls">
-              <button class="titlebar-btn" @click="WindowMinimise">&#x2013;</button>
-              <button class="titlebar-btn" @click="WindowToggleMaximise">&#9633;</button>
-              <button class="titlebar-btn titlebar-close" @click="Quit">&#10005;</button>
+  <div class="app">
+    <!-- 无边框窗口标题栏 -->
+    <div class="titlebar" style="--wails-draggable: drag;">
+      <div class="titlebar-title">
+        <span class="dot" style="--wails-draggable: none;"></span>
+        Onekey
+      </div>
+      <div class="titlebar-controls" style="--wails-draggable: none;">
+        <button class="tb-btn" @click="WindowMinimise">&#x2013;</button>
+        <button class="tb-btn" @click="WindowToggleMaximise">&#9633;</button>
+        <button class="tb-btn tb-close" @click="Quit">&#10005;</button>
+      </div>
+    </div>
+
+    <!-- 顶部状态条 -->
+    <div class="statusbar">
+      <span class="status-item" :class="{ ok: steamOk }">
+        <i class="status-dot" :class="{ ok: steamOk }"></i>
+        {{ steamOk ? 'Steam 已就绪' : '未检测到 Steam 路径' }}
+      </span>
+      <span class="status-item" :class="taskClass">
+        <i class="status-dot" :class="taskClass"></i>
+        {{ taskLabel }}
+      </span>
+      <span v-if="taskMsg" class="status-item task-msg">{{ taskMsg }}</span>
+    </div>
+
+    <main class="content">
+      <!-- 设置 -->
+      <section class="card">
+        <h2>设置</h2>
+        <div class="grid-2">
+          <label class="field">
+            <span>Steam 路径</span>
+            <input v-model="steamPath" placeholder="自动检测，可手动覆盖"/>
+          </label>
+          <label class="field">
+            <span>代理地址</span>
+            <input v-model="proxyUrl" placeholder="如 http://127.0.0.1:7890（留空为不使用）"/>
+          </label>
+        </div>
+        <div class="row">
+          <button class="primary" :disabled="saving" @click="saveConfig">{{ saving ? '保存中…' : '保存设置' }}</button>
+          <button :disabled="testingProxy" @click="testProxy">{{ testingProxy ? '测试中…' : '测试代理' }}</button>
+          <button class="ghost" @click="resetConfig">重置配置</button>
+        </div>
+      </section>
+
+      <!-- 内核设置 -->
+      <section class="card">
+        <h2>内核设置</h2>
+        <div class="switches">
+          <label class="switch">
+            <input type="checkbox" v-model="kernel.activate_unlock_mode" @change="saveKernel"/>
+            <span class="track"><span class="thumb"></span></span>
+            <span>激活解锁模式</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" v-model="kernel.always_stay_unlocked" @change="saveKernel"/>
+            <span class="track"><span class="thumb"></span></span>
+            <span>常驻解锁</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" v-model="kernel.not_unlock_depot" @change="saveKernel"/>
+            <span class="track"><span class="thumb"></span></span>
+            <span>不解锁仓库（depot）</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- 搜索 / 解锁 -->
+      <section class="card">
+        <h2>搜索 / 解锁游戏</h2>
+        <div class="row">
+          <input v-model="searchTerm" placeholder="输入游戏名称，回车搜索" @keyup.enter="doSearch"/>
+          <button :disabled="searching" @click="doSearch">{{ searching ? '搜索中…' : '搜索' }}</button>
+        </div>
+        <!-- AppID 直解锁：不经商店搜索，走国内 CDN 拉取解锁数据，商店域名断连时仍可用 -->
+        <div class="row" style="margin-top: 0.6rem">
+          <input v-model="appidTerm" placeholder="或直接输入 AppID 解锁（如 1144200）" @keyup.enter="unlockByAppId"/>
+          <button class="primary" :disabled="unlocking" @click="unlockByAppId">{{ unlocking ? '解锁中…' : '直解锁' }}</button>
+        </div>
+        <div v-if="results.length" class="results">
+          <div v-for="r in results" :key="r.id" class="item">
+            <img v-if="r.tiny_image" :src="r.tiny_image" alt=""/>
+            <div class="info">
+              <div class="name">{{ r.name }}</div>
+              <div class="meta">
+                {{ r.type || 'app' }} · {{ formatPrice(r) }}
+                <span v-if="r.platforms" class="platforms">
+                  <span v-if="r.platforms.windows">Win</span><span v-if="r.platforms.mac">/Mac</span><span v-if="r.platforms.linux">/Linux</span>
+                </span>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" @click="unlock(r)">解锁</button>
+              <button @click="addToLibrary(r)">加入库</button>
             </div>
           </div>
-          <router-view style="height: calc(100vh - 32px);"/>
-        </template>
+        </div>
+      </section>
 
-        <!-- Main layout with sidebar -->
-        <template v-else>
-          <n-layout has-sider style="height: 100vh">
-            <n-layout-sider
-                :collapsed="collapsed"
-                :collapsed-width="64"
-                :width="220"
-                bordered
-                collapse-mode="width"
-                show-trigger
-                @collapse="collapsed = true"
-                @expand="collapsed = false"
-            >
-              <div class="sider-content">
-                <div class="sider-top">
-                  <div v-if="!collapsed" class="sider-logo">
-                    <n-text strong style="font-size: 18px;">Onekey</n-text>
-                  </div>
-                  <n-menu
-                      :collapsed="collapsed"
-                      :collapsed-icon-size="22"
-                      :collapsed-width="64"
-                      :options="menuOptions"
-                      :value="activeKey"
-                      @update:value="handleMenuSelect"
-                  />
-                </div>
-                <div class="sider-actions">
-                  <n-divider style="margin: 8px 0"/>
-                  <n-button block quaternary size="small" @click="showAnnouncementModal">
-                    <template #icon>
-                      <n-icon :component="MegaphoneOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ t('sidebar.announcements') }}</span>
-                  </n-button>
-                  <n-button block quaternary size="small" @click="handleLoadKernel">
-                    <template #icon>
-                      <n-icon :component="DownloadOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ t('sidebar.load_kernel') }}</span>
-                  </n-button>
-                  <n-button block quaternary size="small" @click="showKernelSettingsModal">
-                    <template #icon>
-                      <n-icon :component="CogOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ t('kernel_settings.title') }}</span>
-                  </n-button>
-                  <n-button block quaternary size="small" @click="handlePatchVDF">
-                    <template #icon>
-                      <n-icon :component="BuildOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ t('sidebar.patch_vdf') }}</span>
-                  </n-button>
-                  <n-button block quaternary size="small" @click="handleRestartSteam">
-                    <template #icon>
-                      <n-icon :component="RefreshOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ t('sidebar.restart_steam') }}</span>
-                  </n-button>
-                  <n-button block quaternary size="small" @click="toggleTheme">
-                    <template #icon>
-                      <n-icon :component="isDark ? SunnyOutline : MoonOutline"/>
-                    </template>
-                    <span v-if="!collapsed">{{ isDark ? t('sidebar.light_mode') : t('sidebar.dark_mode') }}</span>
-                  </n-button>
-                </div>
-              </div>
-            </n-layout-sider>
-
-            <n-layout>
-              <!-- Title bar -->
-              <div class="titlebar" style="--wails-draggable: drag;">
-                <div class="titlebar-drag"></div>
-                <div class="titlebar-controls">
-                  <button class="titlebar-btn" @click="WindowMinimise">&#x2013;</button>
-                  <button class="titlebar-btn" @click="WindowToggleMaximise">&#9633;</button>
-                  <button class="titlebar-btn titlebar-close" @click="Quit">&#10005;</button>
-                </div>
-              </div>
-              <n-layout-content :native-scrollbar="false" content-style="padding: 24px;"
-                                style="height: calc(100vh - 32px);">
-                <router-view/>
-              </n-layout-content>
-            </n-layout>
-          </n-layout>
-        </template>
-        <!-- Announcement Modal -->
-        <n-modal v-model:show="annModalVisible" :bordered="false" :segmented="{ content: true }" :title="t('announcement.title')"
-                 preset="card" style="max-width: 600px;">
-          <div v-if="annList.length === 0" style="text-align: center; padding: 24px;">
-            <n-text depth="3">{{ t('announcement.empty') }}</n-text>
+      <!-- 已解锁游戏库 -->
+      <section class="card">
+        <h2>已解锁游戏库</h2>
+        <div v-if="!library.length" class="empty">暂无解锁记录</div>
+        <div v-for="g in library" :key="g.app_id" class="lib-item">
+          <img v-if="g.tiny_image" :src="g.tiny_image" alt=""/>
+          <div class="info">
+            <div class="name">
+              {{ g.name }}
+              <em v-if="g.unlocked" class="badge">已解锁</em>
+            </div>
+            <div class="meta">AppID {{ g.app_id }} · {{ g.depot_count }} 仓库 · {{ g.dlc_count }} DLC</div>
           </div>
-          <n-space v-else :size="16" vertical>
-            <n-card v-for="ann in annList" :key="ann.id" :bordered="true" size="small">
-              <template #header>
-                <n-space :size="8" align="center">
-                  <span>{{ ann.title }}</span>
-                  <n-tag :bordered="false" size="tiny">{{ ann.author }}</n-tag>
-                </n-space>
-              </template>
-              <template #header-extra>
-                <n-text depth="3" style="font-size: 12px;">{{ formatDate(ann.createdAt) }}</n-text>
-              </template>
-              <div class="md-content" v-html="renderMarkdown(ann.content)"></div>
-            </n-card>
-          </n-space>
-        </n-modal>
-        <!-- Kernel Settings Modal -->
-        <n-modal v-model:show="kernelSettingsVisible" :bordered="false" :title="t('kernel_settings.title')"
-                 preset="card" style="max-width: 420px;">
-          <n-spin :show="kernelSettingsLoading">
-            <n-space :size="16" vertical>
-              <n-space align="center" justify="space-between">
-                <n-text>{{ t('kernel_settings.activate_unlock_mode') }}</n-text>
-                <n-switch v-model:value="kernelSettings.activate_unlock_mode" @update:value="saveKernelSettings"/>
-              </n-space>
-              <n-space align="center" justify="space-between">
-                <n-text>{{ t('kernel_settings.always_stay_unlocked') }}</n-text>
-                <n-switch v-model:value="kernelSettings.always_stay_unlocked" @update:value="saveKernelSettings"/>
-              </n-space>
-              <n-space align="center" justify="space-between">
-                <n-text>{{ t('kernel_settings.not_unlock_depot') }}</n-text>
-                <n-switch v-model:value="kernelSettings.not_unlock_depot" @update:value="saveKernelSettings"/>
-              </n-space>
-            </n-space>
-          </n-spin>
-        </n-modal>
-      </n-dialog-provider>
-    </n-message-provider>
-  </n-config-provider>
+          <div class="actions">
+            <button @click="toggleDetail(g.app_id)">{{ detailOpen === g.app_id ? '收起' : '详情' }}</button>
+            <button class="danger" @click="removeGame(g.app_id)">移除</button>
+          </div>
+          <!-- 展开的详情 -->
+          <div v-if="detailOpen === g.app_id && detail" class="detail">
+            <div class="detail-block" v-if="detail.depots && detail.depots.length">
+              <div class="detail-h">仓库</div>
+              <div v-for="d in detail.depots" :key="d.depot_id" class="detail-row mono">
+                <span>depot {{ d.depot_id }}</span>
+                <span class="dim">key {{ d.depot_key ? d.depot_key.slice(0, 10) + '…' : '无' }}</span>
+                <span class="dim">{{ d.manifest_id }}</span>
+              </div>
+            </div>
+            <div class="detail-block" v-if="detail.dlcs && detail.dlcs.length">
+              <div class="detail-h">DLC</div>
+              <div v-for="d in detail.dlcs" :key="d.depot_id" class="detail-row mono">
+                <span>app {{ d.app_id }}</span>
+                <span class="dim">depot {{ d.depot_id }}</span>
+                <span class="dim">{{ d.manifest_id }}</span>
+              </div>
+            </div>
+            <div class="detail-note" v-if="detail.lua_path">Lua：{{ detail.lua_path }}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 内核工具 -->
+      <section class="card">
+        <h2>内核工具</h2>
+        <div class="row">
+          <button class="primary" @click="installKernel">安装内核(OpenSteamTools)</button>
+          <button class="primary" @click="restartSteam">重启 Steam</button>
+        </div>
+        <div class="kernel-state" :class="kernelState.ready ? 'ok' : 'err'">
+          <i class="status-dot" :class="kernelState.ready ? 'ok' : 'error'"></i>
+          内核状态：{{ kernelState.message }}
+        </div>
+        <div class="hint">内核已内置（免下载），安装后重启 Steam 一次即可生效；Lua 配置热重载，无需每次重启。</div>
+        <details class="av-guide">
+          <summary>杀软误报怎么办？（卡巴斯基 / Defender 等）</summary>
+          <div class="av-guide-body">
+            <p>内核是进程注入式代理，卡巴斯基、Windows Defender 等会把加载它的 Steam 判为"可疑活动"并杀掉/拦截。请在你的杀软里对 Steam 所在目录手动加白名单，即可稳定使用。</p>
+            <p class="av-tip">Windows Defender：设置 → 病毒和威胁防护 → 排除项 → 添加排除 → 文件夹 → 选 Steam 目录，并选中 <code>dwmapi.dll / OpenSteamTool.dll / xinput1_4.dll</code>。</p>
+            <p class="av-tip">卡巴斯基：设置 → 威胁与排除 → 信任区域/排除对象 → 添加 → 选 Steam 目录和上述 DLL（尤其勾选"系统监控"）。</p>
+            <p class="av-tip">请勿让本程序或以提权方式自动修改系统防御设置——主动防御会判定为可疑终止程序。务必手动在你的杀软界面里操作。</p>
+          </div>
+        </details>
+      </section>
+
+      <!-- 运行日志 -->
+      <section class="card">
+        <h2>运行日志</h2>
+        <div v-if="!logs.length" class="empty">暂无日志</div>
+        <div v-for="(l, i) in logs" :key="i" class="log-line" :class="l.type">
+          <span class="time">{{ l.timestamp }}</span>
+          {{ l.message }}
+        </div>
+      </section>
+    </main>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import {computed, h, onMounted, ref} from 'vue'
-import {useRoute, useRouter} from 'vue-router'
-import {createDiscreteApi, darkTheme, type GlobalThemeOverrides, type MenuOption, NIcon} from 'naive-ui'
+import {computed, onMounted, ref} from 'vue'
+import {Quit, WindowMinimise, WindowToggleMaximise, EventsOn} from '../wailsjs/runtime/runtime'
 import {
-  BuildOutline,
-  CogOutline,
-  DownloadOutline,
-  GameControllerOutline,
-  HomeOutline,
-  MegaphoneOutline,
-  MoonOutline,
-  RefreshOutline,
-  SettingsOutline,
-  SunnyOutline,
-} from '@vicons/ionicons5'
-import {useI18n} from './i18n'
-import {useAppStore} from './stores/app'
-import {
-  CheckUpdate,
-  GetAnnouncements,
+  AddToLibrary,
+  GetConfig,
   GetDetailedConfig,
+  GetGameDetail,
   GetKernelSettings,
+  GetLibrary,
+  GetTaskStatus,
+  KernelStatus,
   LoadKernel,
-  PatchVDF,
+  RemoveFromLibrary,
+  ResetConfig,
   RestartSteam,
-  SetKernelSettings
+  SearchStore,
+  SetKernelSettings,
+  StartUnlock,
+  TestProxy,
+  UpdateConfig,
 } from '../wailsjs/go/main/App'
-import {BrowserOpenURL, EventsOn, Quit, WindowMinimise, WindowToggleMaximise} from '../wailsjs/runtime/runtime'
-import {marked} from 'marked'
 
-const {t} = useI18n()
-const route = useRoute()
-const router = useRouter()
-const store = useAppStore()
+const searchTerm = ref('')
+const searching = ref(false)
+const results = ref<any[]>([])
+const appidTerm = ref('')
+const unlocking = ref(false)
+const library = ref<any[]>([])
+const configData = ref({steam_path: '', debug_mode: false})
 
-// Theme
-const isDark = ref(localStorage.getItem('theme') === 'dark')
-const theme = computed(() => isDark.value ? darkTheme : null)
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: '#6750a4',
-    primaryColorHover: '#7c6bb5',
-    primaryColorPressed: '#5a3f96',
-    fontFamily: '"LXGW WenKai Mono", sans-serif',
-  },
-}
+const steamPath = ref('')
+const proxyUrl = ref('')
+const saving = ref(false)
+const testingProxy = ref(false)
 
-// Discrete API for message/dialog — App.vue renders the providers itself,
-// so useMessage()/useDialog() can't inject from them. createDiscreteApi
-// creates standalone instances that work anywhere.
-const {message, dialog} = createDiscreteApi(
-    ['message', 'dialog'],
-    {
-      configProviderProps: computed(() => ({
-        theme: isDark.value ? darkTheme : undefined,
-        themeOverrides,
-      })),
-    }
-)
+const kernel = ref({activate_unlock_mode: false, always_stay_unlocked: false, not_unlock_depot: false})
+const kernelState = ref({ready: false, message: '检测中…'})
 
-function toggleTheme() {
-  isDark.value = !isDark.value
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
-}
+const taskStatus = ref('idle')
+const taskResult = ref<any>(null)
+const detailOpen = ref<number | null>(null)
+const detail = ref<any>(null)
 
-// Sidebar collapse
-const collapsed = ref(false)
+const logs = ref<Array<{type: string; message: string; timestamp: string}>>([])
 
-// Menu
-function renderIcon(icon: any) {
-  return () => h(NIcon, null, {default: () => h(icon)})
-}
-
-const menuOptions: MenuOption[] = [
-  {label: () => t('nav.home'), key: 'home', icon: renderIcon(HomeOutline)},
-  {label: () => t('nav.games'), key: 'games', icon: renderIcon(GameControllerOutline)},
-  {label: () => t('nav.settings'), key: 'settings', icon: renderIcon(SettingsOutline)},
-]
-
-const activeKey = computed(() => {
-  const name = route.name as string
-  return name || 'home'
+const steamOk = computed(() => !!configData.value.steam_path)
+const taskClass = computed(() => {
+  const s = taskStatus.value
+  if (s === 'running') return 'running'
+  if (s === 'error') return 'error'
+  if (s === 'completed') return 'ok'
+  return 'idle'
+})
+const taskLabel = computed(() => {
+  const map: Record<string, string> = {idle: '空闲', running: '处理中…', completed: '已完成', error: '出错'}
+  return map[taskStatus.value] || taskStatus.value
+})
+const taskMsg = computed(() => {
+  if (taskStatus.value === 'error' && taskResult.value) return taskResult.value.message
+  if (taskStatus.value === 'completed' && taskResult.value) return taskResult.value.message
+  return ''
 })
 
-function handleMenuSelect(key: string) {
-  if (key === 'home') router.push('/')
-  else router.push(`/${key}`)
-}
-
-// Sidebar actions
-const kernelLoading = ref(false)
-
-function handleLoadKernel() {
-  dialog.warning({
-    title: t('kernel.confirm_title'),
-    content: t('kernel.confirm_content'),
-    positiveText: t('common.confirm'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: async () => {
-      kernelLoading.value = true
-      try {
-        const result = await LoadKernel()
-        if (result.success) {
-          message.success(result.message)
-        } else {
-          message.error(result.message)
-        }
-      } catch (e: any) {
-        message.error(e.message || t('kernel.failed'))
-      } finally {
-        kernelLoading.value = false
-      }
-    },
+function addLog(type: string, message: string) {
+  logs.value.push({type, message, timestamp: new Date().toLocaleTimeString()})
+  // 自动滚到底
+  requestAnimationFrame(() => {
+    const el = document.querySelector('.content')
+    if (el) el.scrollTop = el.scrollHeight
   })
 }
 
-function handlePatchVDF() {
-  dialog.warning({
-    title: t('patch.confirm_title'),
-    content: t('patch.confirm_content'),
-    positiveText: t('common.confirm'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: async () => {
-      try {
-        const result = await PatchVDF()
-        if (result.success) {
-          message.success(result.message)
-        } else {
-          message.error(result.message)
-        }
-      } catch (e: any) {
-        message.error(e.message || t('patch.failed'))
-      }
-    },
-  })
-}
-
-function handleRestartSteam() {
-  dialog.warning({
-    title: t('sidebar.restart_confirm_title'),
-    content: t('sidebar.restart_confirm'),
-    positiveText: t('common.confirm'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: async () => {
-      try {
-        const result = await RestartSteam()
-        if (result.success) {
-          message.success(result.message)
-        } else {
-          message.error(result.message)
-        }
-      } catch (e: any) {
-        message.error(e.message || 'Failed')
-      }
-    },
-  })
-}
-
-// --- Announcements ---
-const annModalVisible = ref(false)
-const annList = ref<any[]>([])
-
-function renderMarkdown(content: string): string {
-  return marked.parse(content, {async: false}) as string
-}
-
-function formatDate(iso: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return d.toLocaleDateString()
-}
-
-async function fetchAnnouncements() {
+async function refreshConfig() {
   try {
-    const resp = await GetAnnouncements()
-    if (resp.success && resp.announcements) {
-      annList.value = resp.announcements
+    const r = await GetConfig()
+    if (r.success) configData.value = r.config
+  } catch {
+  }
+  try {
+    const d = await GetDetailedConfig()
+    if (d.success && d.config) {
+      steamPath.value = d.config.steam_path || ''
+      proxyUrl.value = d.config.proxy_url || ''
     }
-  } catch (e) {
+  } catch {
   }
 }
 
-function showAnnouncementModal() {
-  fetchAnnouncements()
-  annModalVisible.value = true
+async function refreshKernel() {
+  try {
+    const r = await GetKernelSettings()
+    if (r.success) kernel.value = r.settings
+  } catch {
+  }
 }
 
-// --- Kernel Settings ---
-const kernelSettingsVisible = ref(false)
-const kernelSettingsLoading = ref(false)
-const kernelSettings = ref({
-  activate_unlock_mode: false,
-  always_stay_unlocked: false,
-  not_unlock_depot: false,
-})
-
-async function showKernelSettingsModal() {
-  kernelSettingsVisible.value = true
-  kernelSettingsLoading.value = true
+async function refreshLibrary() {
   try {
-    const resp = await GetKernelSettings()
-    if (resp.success) {
-      kernelSettings.value = resp.settings
-    } else {
-      message.error(resp.message || t('kernel_settings.load_failed'))
-    }
-  } catch (e) {
-    message.error(t('kernel_settings.load_failed'))
+    library.value = (await GetLibrary()) || []
+  } catch (e: any) {
+    addLog('error', e?.message || '读取游戏库失败')
+  }
+}
+
+async function refreshTask() {
+  try {
+    const t = await GetTaskStatus()
+    taskStatus.value = t.status || 'idle'
+    taskResult.value = t.result || null
+  } catch {
+  }
+}
+
+async function refreshKernelStatus() {
+  try {
+    const r = await KernelStatus()
+    kernelState.value = {ready: r.success, message: r.message || (r.success ? '内核已就绪' : '内核缺失')}
+  } catch {
+    kernelState.value = {ready: false, message: '检测失败'}
+  }
+}
+
+async function doSearch() {
+  const term = searchTerm.value.trim()
+  if (!term) {
+    addLog('warn', '请输入搜索关键词')
+    return
+  }
+  searching.value = true
+  results.value = []
+  addLog('info', `正在搜索：${term}`)
+  try {
+    const res = await SearchStore(term)
+    const list = (res && res.items) || []
+    results.value = list
+    if (list.length) addLog('info', `搜索到 ${list.length} 个结果`)
+    else addLog('warn', '未找到匹配的游戏，换个关键词试试')
+  } catch (e: any) {
+    addLog('error', '搜索失败：' + (e?.message || String(e) || '未知错误'))
+    results.value = []
   } finally {
-    kernelSettingsLoading.value = false
+    searching.value = false
   }
 }
 
-async function saveKernelSettings() {
+function formatPrice(r: any) {
+  const p = r.price
+  if (!p) return '免费'
+  return p.final === 0 ? '免费' : '\u00a5' + (p.final / 100).toFixed(2)
+}
+
+async function unlock(r: any) {
   try {
-    const resp = await SetKernelSettings(kernelSettings.value)
-    if (!resp.success) {
-      message.error(resp.message)
+    await AddToLibrary(r.id, r.name, r.tiny_image || '', r.type || 'app')
+    const resp = await StartUnlock(String(r.id))
+    if (resp.success) {
+      addLog('info', `已开始解锁：${r.name}`)
+    } else {
+      addLog('error', resp.message)
     }
   } catch (e: any) {
-    message.error(e.message || 'Error')
+    addLog('error', e?.message || '解锁失败')
+  }
+  await refreshTask()
+  await refreshLibrary()
+}
+
+async function unlockByAppId() {
+  const appID = appidTerm.value.trim()
+  if (!appID) {
+    addLog('warn', '请输入 AppID')
+    return
+  }
+  unlocking.value = true
+  try {
+    const resp = await StartUnlock(appID)
+    if (resp.success) addLog('info', `已开始解锁 AppID：${appID}`)
+    else addLog('error', resp.message)
+  } catch (e: any) {
+    addLog('error', e?.message || '解锁失败')
+  } finally {
+    unlocking.value = false
+  }
+  await refreshTask()
+  await refreshLibrary()
+}
+
+async function addToLibrary(r: any) {
+  try {
+    const resp = await AddToLibrary(r.id, r.name, r.tiny_image || '', r.type || 'app')
+    if (resp.success) addLog('info', `已加入库：${r.name}`)
+    else addLog('error', resp.message)
+  } catch (e: any) {
+    addLog('error', e?.message || '加入库失败')
+  }
+  await refreshLibrary()
+}
+
+async function removeGame(appID: number) {
+  try {
+    const resp = await RemoveFromLibrary(appID)
+    if (resp.success) addLog('info', `已移除 AppID ${appID}`)
+    else addLog('error', resp.message)
+    if (detailOpen.value === appID) detailOpen.value = null
+  } catch (e: any) {
+    addLog('error', e?.message || '移除失败')
+  }
+  await refreshLibrary()
+}
+
+async function toggleDetail(appID: number) {
+  if (detailOpen.value === appID) {
+    detailOpen.value = null
+    return
+  }
+  detailOpen.value = appID
+  detail.value = null
+  try {
+    detail.value = await GetGameDetail(appID)
+  } catch (e: any) {
+    addLog('error', '加载详情失败：' + (e?.message || String(e)))
+  }
+}
+
+async function saveConfig() {
+  try {
+    const cur = (await GetDetailedConfig()).config
+    saving.value = true
+    const resp = await UpdateConfig({
+      steam_path: steamPath.value.trim(),
+      debug_mode: cur.debug_mode,
+      logging_files: cur.logging_files,
+      show_console: cur.show_console,
+      language: cur.language,
+      proxy_url: proxyUrl.value.trim(),
+    })
+    if (resp.success) addLog('info', '配置已保存')
+    else addLog('error', resp.message)
+    await refreshConfig()
+  } catch (e: any) {
+    addLog('error', '保存失败：' + (e?.message || String(e)))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function testProxy() {
+  const url = proxyUrl.value.trim()
+  if (!url) {
+    addLog('warn', '请先填写代理地址')
+    return
+  }
+  testingProxy.value = true
+  try {
+    const resp = await TestProxy(url)
+    if (resp.success) addLog('info', `代理可用：${resp.message}`)
+    else addLog('error', `代理不可用：${resp.message}`)
+  } catch (e: any) {
+    addLog('error', '测试失败：' + (e?.message || String(e)))
+  } finally {
+    testingProxy.value = false
+  }
+}
+
+async function saveKernel() {
+  try {
+    const resp = await SetKernelSettings(kernel.value)
+    if (resp.success) addLog('info', '内核设置已保存')
+    else addLog('error', resp.message)
+  } catch (e: any) {
+    addLog('error', '内核设置保存失败：' + (e?.message || String(e)))
+  }
+}
+
+async function resetConfig() {
+  if (!window.confirm('确定要恢复默认配置吗？此操作不可撤销。')) return
+  try {
+    const resp = await ResetConfig()
+    if (resp.success) addLog('info', resp.message)
+    else addLog('error', resp.message)
+    await refreshConfig()
+    await refreshKernel()
+  } catch (e: any) {
+    addLog('error', '重置失败：' + (e?.message || String(e)))
+  }
+}
+
+async function installKernel() {
+  await act(LoadKernel)
+  await refreshKernelStatus()
+}
+
+async function restartSteam() {
+  await act(RestartSteam)
+  await refreshKernelStatus()
+}
+
+async function act(fn: () => Promise<any>) {
+  try {
+    const resp = await fn()
+    if (resp.success) addLog('info', resp.message)
+    else addLog('error', resp.message)
+  } catch (e: any) {
+    addLog('error', e?.message || '操作失败')
   }
 }
 
 onMounted(async () => {
-  // OOBE check: redirect to setup if no key configured
-  if (route.name !== 'oobe') {
-    try {
-      const cfg = await GetDetailedConfig()
-      if (cfg.success && (!cfg.config.key || cfg.config.key === '')) {
-        router.push('/oobe')
-        return
-      }
-    } catch (e) {
-      router.push('/oobe')
-      return
-    }
-  }
+  await Promise.all([refreshConfig(), refreshKernel(), refreshLibrary(), refreshTask(), refreshKernelStatus()])
 
-  // Global task event listeners — persist across route changes
   EventsOn('task_progress', (data: any) => {
-    store.addLog(data.type, data.message)
+    if (data && data.message) {
+      addLog(data.type || 'info', data.message)
+      if (data.type === 'error') taskStatus.value = 'running'
+    }
   })
-  EventsOn('task_done', (result: any) => {
-    if (result && result.success) {
-      store.setTaskStatus('completed')
-      message.success(result.message)
-    } else if (result) {
-      store.setTaskStatus('error')
-      message.error(result.message)
-    }
-    store.setTaskStatus('idle')
+  EventsOn('task_done', async (result: any) => {
+    taskStatus.value = result && result.success ? 'completed' : 'error'
+    taskResult.value = result || null
+    if (result) addLog(result.success ? 'info' : 'error', result.message)
+    await refreshLibrary()
   })
-
-  await fetchAnnouncements()
-  if (annList.value.length > 0) {
-    // Find the latest announcement (highest id)
-    const latest = annList.value.reduce((a, b) => (a.id > b.id ? a : b))
-    const lastSeenId = localStorage.getItem('lastSeenAnnouncementId')
-    if (String(latest.id) !== lastSeenId) {
-      // Only show the latest new one
-      annList.value = [latest]
-      annModalVisible.value = true
-      localStorage.setItem('lastSeenAnnouncementId', String(latest.id))
-    }
-  }
-
-  // Auto check for updates on startup
-  try {
-    const info = await CheckUpdate()
-    if (info && info.has_update) {
-      dialog.info({
-        title: t('update.title'),
-        content: () =>
-            h('div', {}, [
-              h('p', {}, `${t('update.current')}: v${info.current_version}`),
-              h('p', {}, `${t('update.latest')}: v${info.latest_version}`),
-              info.changelog ? h('p', {}, `${t('update.changelog')}: ${info.changelog}`) : null,
-            ]),
-        positiveText: info.download_url ? t('update.download') : undefined,
-        negativeText: t('common.cancel'),
-        onPositiveClick: () => {
-          if (info.download_url) {
-            BrowserOpenURL(info.download_url)
-          }
-        },
-      })
-    }
-  } catch (e) {
-  }
 })
 </script>
 
 <style>
-body {
+:root {
+  --bg: #0d0d17;
+  --glass: rgba(255, 255, 255, 0.055);
+  --glass-strong: rgba(255, 255, 255, 0.09);
+  --stroke: rgba(255, 255, 255, 0.1);
+  --text: #eef0ff;
+  --text-dim: #9aa0c0;
+  --accent: #6c7bff;
+  --accent-2: #9d5cff;
+  --ok: #41d98a;
+  --warn: #f5c14e;
+  --err: #ff6b7a;
+  --radius: 18px;
+  --radius-sm: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
   margin: 0;
-  padding: 0;
-  font-family: 'LXGW WenKai Mono', sans-serif;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  overflow: hidden;
+  color: var(--text);
+}
+
+/* 星空背景：纯 CSS 多层渐变，无外链资源 */
+.app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background:
+    radial-gradient(1px 1px at 15% 22%, rgba(255,255,255,0.7) 50%, transparent 51%),
+    radial-gradient(1px 1px at 62% 9%, rgba(255,255,255,0.55) 50%, transparent 51%),
+    radial-gradient(2px 2px at 38% 55%, rgba(255,255,255,0.35) 50%, transparent 51%),
+    radial-gradient(1px 1px at 82% 40%, rgba(255,255,255,0.5) 50%, transparent 51%),
+    radial-gradient(1px 1px at 28% 78%, rgba(255,255,255,0.4) 50%, transparent 51%),
+    radial-gradient(1px 1px at 74% 72%, rgba(255,255,255,0.55) 50%, transparent 51%),
+    radial-gradient(2px 2px at 47% 90%, rgba(255,255,255,0.3) 50%, transparent 51%),
+    radial-gradient(900px 520px at 50% -10%, rgba(108,123,255,0.22), transparent 60%),
+    radial-gradient(720px 480px at 88% 108%, rgba(157,92,255,0.18), transparent 62%),
+    linear-gradient(160deg, #0d0d17, #12102b);
   overflow: hidden;
 }
-
-.md-content h1, .md-content h2, .md-content h3,
-.md-content h4, .md-content h5, .md-content h6 {
-  margin: 8px 0 4px;
+.app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(115deg, rgba(255,255,255,0.012) 0 2px, transparent 2px 6px);
+  pointer-events: none;
 }
 
-.md-content h1 {
-  font-size: 1.4em;
-}
-
-.md-content h2 {
-  font-size: 1.2em;
-}
-
-.md-content h3 {
-  font-size: 1.1em;
-}
-
-.md-content p {
-  margin: 4px 0;
-}
-
-.md-content ul, .md-content ol {
-  padding-left: 20px;
-  margin: 4px 0;
-}
-
-.md-content code {
-  background: rgba(128, 128, 128, 0.15);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 0.9em;
-}
-
-.md-content pre {
-  background: rgba(128, 128, 128, 0.1);
-  padding: 8px 12px;
-  border-radius: 6px;
-  overflow-x: auto;
-}
-
-.md-content pre code {
-  background: none;
-  padding: 0;
-}
-
-.md-content blockquote {
-  border-left: 3px solid #6750a4;
-  margin: 4px 0;
-  padding: 4px 12px;
-  opacity: 0.85;
-}
-
-.md-content a {
-  color: #6750a4;
-}
-
-.md-content img {
-  max-width: 100%;
-  border-radius: 6px;
-}
-</style>
-
-<style scoped>
 .titlebar {
-  height: 32px;
+  position: relative;
+  z-index: 2;
+  height: 40px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  padding: 0 8px 0 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));
+  border-bottom: 1px solid var(--stroke);
   user-select: none;
   flex-shrink: 0;
 }
-
-.titlebar-drag {
-  flex: 1;
-  height: 100%;
+.titlebar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
-
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 0 10px rgba(108,123,255,0.8);
+  -webkit-background-clip: padding-box;
+  background-clip: padding-box;
+}
 .titlebar-controls {
   display: flex;
   height: 100%;
-  --wails-draggable: none;
 }
-
-.titlebar-btn {
+.tb-btn {
   width: 46px;
-  height: 100%;
   border: none;
   background: transparent;
-  color: inherit;
-  font-size: 13px;
+  color: var(--text-dim);
+  font-size: 14px;
   cursor: pointer;
+}
+.tb-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+.tb-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.statusbar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: background 0.15s;
+  gap: 18px;
+  padding: 10px 20px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4a4f6e;
+}
+.status-dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.status-dot.running { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: pulse 1.2s infinite; }
+.status-dot.error { background: var(--err); box-shadow: 0 0 8px var(--err); }
+.status-item.ok { color: var(--ok); }
+.status-item.running { color: var(--warn); }
+.status-item.error { color: var(--err); }
+.status-item.task-msg { color: var(--text-dim); max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
-.titlebar-btn:hover {
-  background: rgba(128, 128, 128, 0.2);
-}
-
-.titlebar-close:hover {
-  background: #e81123;
-  color: white;
-}
-
-.sider-content {
+.content {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 20px 26px;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  gap: 16px;
 }
 
-.sider-top {
+.card {
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.row input {
   flex: 1;
+  min-width: 220px;
+  margin-top: 0;
+}
+input {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--stroke);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 9px 13px;
+  font-size: 13.5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input::placeholder { color: #6a6f8c; }
+input:focus { border-color: var(--accent); }
+
+button {
+  background: var(--glass-strong);
+  border: 1px solid var(--stroke);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 9px 16px;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: transform 0.05s ease, background 0.15s, border-color 0.15s;
+}
+button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+button:active { transform: translateY(1px); }
+button.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none;
+  font-weight: 600;
+}
+button.primary:hover { filter: brightness(1.1); }
+button.ghost { opacity: 0.8; }
+button.danger {
+  background: rgba(255, 107, 122, 0.14);
+  border-color: rgba(255, 107, 122, 0.35);
+  color: #ffb4bd;
+}
+button.danger:hover { background: rgba(255, 107, 122, 0.25); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch .track {
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.switch .thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.2s;
+}
+.switch input:checked + .track {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+.switch input:checked + .track .thumb { left: 21px; }
+
+.results {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.item, .lib-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+}
+.item img, .lib-item img {
+  width: 60px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 7px;
+  background: rgba(0,0,0,0.4);
+  flex-shrink: 0;
+}
+.item .info, .lib-item .info {
+  flex: 1;
+  overflow: hidden;
+}
+.name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.platforms { color: var(--text-dim); }
+.badge {
+  font-style: normal;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(65, 217, 138, 0.16);
+  color: var(--ok);
+  border: 1px solid rgba(65, 217, 138, 0.4);
+  flex-shrink: 0;
+}
+.item .actions, .lib-item .actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.sider-logo {
-  padding: 16px 20px 8px;
+.lib-item {
+  flex-wrap: wrap;
+}
+.detail {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--stroke);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.detail-block { display: flex; flex-direction: column; gap: 4px; }
+.detail-h { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.detail-row {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text);
+}
+.mono { font-family: Consolas, "Cascadia Mono", monospace; }
+.dim { color: var(--text-dim); }
+.detail-note { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.hint {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.kernel-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+.kernel-state.ok { color: var(--ok); }
+.kernel-state.err { color: var(--err); }
+
+.av-guide {
+  margin-top: 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text-dim);
+}
+.av-guide summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 500;
+}
+.av-guide-body { margin-top: 8px; }
+.av-guide-body p { margin: 6px 0; line-height: 1.5; }
+.av-guide-body code { background: var(--stroke); border-radius: 4px; padding: 1px 4px; }
+.av-tip { font-size: 12px; }
+
+.log-line {
+  font-size: 12.5px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--stroke);
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.log-line:last-child { border-bottom: none; }
+.log-line.info { color: var(--ok); }
+.log-line.error { color: var(--err); }
+.log-line.warn { color: var(--warn); }
+.log-line .time {
+  color: var(--text-dim);
+  margin-right: 8px;
 }
 
-.sider-actions {
-  padding: 4px 8px 12px;
+@media (max-width: 720px) {
+  .grid-2 { grid-template-columns: 1fr; }
 }
 </style>

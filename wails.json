@@ -7,14 +7,14 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "ikun0014",
+    "name": "飞翔的死猪",
     "email": ""
   },
   "info": {
-    "companyName": "ikunshare",
+    "companyName": "Onekey",
     "productName": "Onekey",
     "productVersion": "3.0.1",
-    "copyright": "Copyright 2026 ikunshare",
+    "copyright": "Copyright (C) 2026 飞翔的死猪; original (C) ikunshare",
     "comments": "Steam Depot Manifest Downloader"
   }
 }

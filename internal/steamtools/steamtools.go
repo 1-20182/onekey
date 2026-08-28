@@ -10,11 +10,13 @@ import (
 	"onekey/internal/models"
 )
 
-// Setup generates the SteamTools Lua unlock file in Steam's stplug-in directory.
+// Setup generates the OpenSteamTools Lua unlock file in Steam's config/lua
+// directory. OpenSteamTools (the current kernel) reads only config/lua — NOT
+// the legacy config/stplug-in used by the obsolete SteamTools kernel.
 func Setup(steamPath string, appInfo *models.SteamAppInfo, manifests []models.ManifestInfo) error {
-	stPath := filepath.Join(steamPath, "config", "stplug-in")
+	stPath := filepath.Join(steamPath, "config", "lua")
 	if err := os.MkdirAll(stPath, 0755); err != nil {
-		return fmt.Errorf("create stplug-in directory: %w", err)
+		return fmt.Errorf("create config/lua directory: %w", err)
 	}
 
 	var b strings.Builder

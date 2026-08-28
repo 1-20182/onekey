@@ -16,6 +16,7 @@ import (
 	"onekey/internal/config"
 	"onekey/internal/httpclient"
 	"onekey/internal/i18n"
+	"onekey/internal/kernel"
 	"onekey/internal/library"
 	"onekey/internal/manifest"
 	"onekey/internal/models"
@@ -120,7 +121,6 @@ func (a *App) GetDetailedConfig() models.DetailedConfigResponse {
 			LoggingFiles:    a.config.AppConfig.LoggingFiles,
 			ShowConsole:     a.config.AppConfig.ShowConsole,
 			SteamPathExists: steamPathExists,
-			Key:             a.config.AppConfig.Key,
 			Language:        a.config.AppConfig.Language,
 			ProxyURL:        a.config.AppConfig.ProxyURL,
 		},
@@ -150,19 +150,6 @@ func (a *App) ResetConfig() models.SimpleResponse {
 		return models.SimpleResponse{Success: false, Message: i18n.T("web.config_reset_failed", "error", err.Error())}
 	}
 	return models.SimpleResponse{Success: true, Message: i18n.T("web.config_reset")}
-}
-
-// VerifyKey checks an API key against the remote server.
-func (a *App) VerifyKey(key string) models.KeyInfoAPIResponse {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return models.KeyInfoAPIResponse{Key: "", Info: nil}
-	}
-	info, err := fetchKeyInfo(key)
-	if err != nil {
-		return models.KeyInfoAPIResponse{Key: "", Info: nil}
-	}
-	return models.KeyInfoAPIResponse{Key: key, Info: info}
 }
 
 // GetTaskStatus returns current task status.
@@ -202,6 +189,13 @@ func (a *App) StartUnlock(appID string) models.SimpleResponse {
 		return models.SimpleResponse{Success: false, Message: i18n.T("web.invalid_format")}
 	}
 
+	// Steam++（Watt Toolkit）与 Onekey 内置的 OpenSteamTools 内核同为假入库工具，
+	// 同时运行会互相覆盖 appinfo 所有权判定，导致游戏“解锁成功但库中不显示”。
+	if tool := conflictingToolName(); tool != "" {
+		a.taskMu.Unlock()
+		return models.SimpleResponse{Success: false, Message: i18n.T("task.steampp_conflict", "tool", tool)}
+	}
+
 	a.taskStatus = "running"
 	a.taskResult = nil
 	a.taskMu.Unlock()
@@ -231,24 +225,15 @@ func (a *App) runUnlockTask(appID string) {
 		runtime.EventsEmit(a.ctx, "task_done", a.taskResult)
 	}()
 
-	apiKey := a.config.AppConfig.Key
-
 	if a.config.SteamPath == "" {
 		emit("error", i18n.T("task.no_steam_path"))
 		a.setTaskError(i18n.T("task.no_steam_path"))
 		return
 	}
 
-	// 1. Validate key
-	emit("info", i18n.T("task.step.auth"))
-	_, err := fetchKeyInfo(apiKey)
-	if err != nil {
-		emit("warning", fmt.Sprintf("%s: %s", i18n.T("api.key_info_failed"), err.Error()))
-	}
-
-	// 2. Fetch game data from API
+	// Fetch game data from API
 	emit("info", i18n.T("api.fetching_game", "app_id", appID))
-	appInfo, manifestInfo, err := fetchAppData(apiKey, appID)
+	appInfo, manifestInfo, err := fetchAppData(a.config.SteamPath, appID)
 	if err != nil {
 		emit("error", err.Error())
 		a.setTaskError(err.Error())
@@ -303,7 +288,7 @@ func (a *App) runUnlockTask(appID string) {
 		fmt.Sscanf(appInfo.AppID, "%d", &appIDInt)
 
 		// Check if this app is a DLC by querying Steam
-		parentID, parentName := fetchParentApp(appInfo.AppID, a.config.AppConfig.Key)
+		parentID, parentName := fetchParentApp(appInfo.AppID)
 		if parentID != "" && parentName != "" {
 			// It's a DLC — merge under parent game
 			parentIDInt := 0
@@ -354,6 +339,27 @@ func isDigits(s string) bool {
 	return true
 }
 
+// conflictingToolName returns the friendly name of a running competing unlock
+// tool (Steam++/Watt Toolkit), or "" if none is detected. These tools must not
+// run alongside OpenSteamTools: both fake ownership in-process, so they fight
+// over appinfo ownership and games silently fail to show up in the library.
+func conflictingToolName() string {
+	procs := []struct{ exe, name string }{
+		{"Steam++.exe", "Steam++"},
+		{"WattToolkit.exe", "Watt Toolkit"},
+	}
+	for _, p := range procs {
+		out, err := exec.Command("tasklist", "/fi", "imagename eq "+p.exe, "/nh").Output()
+		if err != nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(string(out)), strings.ToLower(p.exe)) {
+			return p.name
+		}
+	}
+	return ""
+}
+
 // SearchStore searches the Steam store for games matching the given term.
 func (a *App) SearchStore(term string) models.StoreSearchResult {
 	term = strings.TrimSpace(term)
@@ -364,7 +370,7 @@ func (a *App) SearchStore(term string) models.StoreSearchResult {
 	if a.config.AppConfig.Language == "en" {
 		lang = "english"
 	}
-	result, err := searchStore(term, lang, a.config.AppConfig.Key)
+	result, err := searchStore(term, lang)
 	if err != nil {
 		return models.StoreSearchResult{}
 	}
@@ -401,7 +407,7 @@ func (a *App) AddToLibrary(appID int, name, tinyImage, appType string) models.Si
 	}
 
 	if appType != "app" && appType != "" {
-		parentID, parentName := fetchParentApp(fmt.Sprintf("%d", appID), a.config.AppConfig.Key)
+		parentID, parentName := fetchParentApp(fmt.Sprintf("%d", appID))
 		if parentID != "" && parentName != "" {
 			parentIDInt := 0
 			fmt.Sscanf(parentID, "%d", &parentIDInt)
@@ -431,44 +437,35 @@ func (a *App) RemoveFromLibrary(appID int) models.SimpleResponse {
 	return models.SimpleResponse{Success: true, Message: i18n.T("library.removed")}
 }
 
-// GetAnnouncements fetches announcements from the server.
-func (a *App) GetAnnouncements() models.AnnouncementResponse {
-	list, err := fetchAnnouncements()
-	if err != nil {
-		return models.AnnouncementResponse{Success: false}
-	}
-	return models.AnnouncementResponse{Success: true, Announcements: list}
-}
-
-// CheckUpdate checks for a new version from the server.
-func (a *App) CheckUpdate() *models.UpdateInfo {
-	info, err := fetchUpdateInfo(AppVersion)
-	if err != nil {
-		return &models.UpdateInfo{
-			HasUpdate:      false,
-			CurrentVersion: AppVersion,
-		}
-	}
-	return info
-}
-
-// LoadKernel downloads the kernel file and saves it as xinput1_4.dll in the Steam root directory.
+// LoadKernel installs the bundled OpenSteamTools DLLs into the Steam root.
 func (a *App) LoadKernel() models.SimpleResponse {
 	if a.config.SteamPath == "" {
 		return models.SimpleResponse{Success: false, Message: i18n.T("kernel.no_steam_path")}
 	}
 
-	data, err := downloadKernel()
+	installed, err := kernel.Install(a.config.SteamPath)
 	if err != nil {
 		return models.SimpleResponse{Success: false, Message: i18n.T("kernel.download_failed", "error", err.Error())}
 	}
+	return models.SimpleResponse{Success: true, Message: fmt.Sprintf("%s (%d 个文件)", i18n.T("kernel.download_success"), len(installed))}
+}
 
-	dstPath := filepath.Join(a.config.SteamPath, "xinput1_4.dll")
-	if err := os.WriteFile(dstPath, data, 0644); err != nil {
-		return models.SimpleResponse{Success: false, Message: i18n.T("kernel.save_failed", "error", err.Error())}
+// KernelStatus checks whether the OpenSteamTools DLLs are present in the Steam
+// root. Success is true only when all three are installed.
+func (a *App) KernelStatus() models.SimpleResponse {
+	if a.config.SteamPath == "" {
+		return models.SimpleResponse{Success: false, Message: "未检测到 Steam 路径"}
 	}
-
-	return models.SimpleResponse{Success: true, Message: i18n.T("kernel.download_success")}
+	var missing []string
+	for _, name := range kernel.Names {
+		if !config.PathExists(filepath.Join(a.config.SteamPath, name)) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return models.SimpleResponse{Success: true, Message: "内核已就绪（3/3）"}
+	}
+	return models.SimpleResponse{Success: false, Message: "内核缺失：" + strings.Join(missing, "、")}
 }
 
 // PatchVDF patches Steam's packageinfo.vdf to modify billingtype entries.

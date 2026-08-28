@@ -111,7 +111,7 @@ func (h *Handler) processSingle(info models.ManifestInfo) bool {
 		return false
 	}
 
-	payload := extractManifestPayload(data)
+	payload := ExtractManifestPayload(data)
 	h.removeOldManifests(info.DepotID, info.ManifestID)
 
 	path := h.manifestPath(info)
@@ -178,7 +178,10 @@ func (h *Handler) removeOldManifests(depotID, currentManifestID string) {
 	}
 }
 
-func extractManifestPayload(content []byte) []byte {
+// ExtractManifestPayload unwraps a manifest that is zipped (as served by the
+// legacy backend) and returns the raw binary. Non-zip content (e.g. raw
+// GitHub manifest binaries) passes through unchanged.
+func ExtractManifestPayload(content []byte) []byte {
 	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
 		return content
